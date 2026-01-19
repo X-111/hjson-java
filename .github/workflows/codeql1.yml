@@ -133,6 +133,8 @@ jobs:
           echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          # Check if the SARIF folder exists
+          echo "Checking if SARIF files are generated..." >> $GITHUB_STEP_SUMMARY
           if [ ! -d "results" ]; then
             echo "- SARIF folder not found: \`results/\`（可能 build 没成功或 analyze 没执行）" >> $GITHUB_STEP_SUMMARY
             exit 0
@@ -144,6 +146,9 @@ jobs:
             echo "- No SARIF files found in \`results/*.sarif\`（可能 analyze 没执行）" >> $GITHUB_STEP_SUMMARY
             exit 0
           fi
+
+          echo "SARIF files found in results/:" >> $GITHUB_STEP_SUMMARY
+          ls -l results/ >> $GITHUB_STEP_SUMMARY  # List the contents of the results folder
 
           for SARIF in "${FILES[@]}"; do
             echo "### 📄 ${SARIF}" >> $GITHUB_STEP_SUMMARY
@@ -228,6 +233,7 @@ jobs:
         with:
           category: "/language:java-kotlin"
 
+      # Print SARIF output content
       - name: Print CodeQL rules used (from SARIF)
         if: always()
         shell: bash
