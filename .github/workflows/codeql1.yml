@@ -1,12 +1,12 @@
-name: "CodeQL (Java - Security Extended, build fallback + Summary)"
+name: "CodeQL (Java - Security Extended, build fallback + Rule Summary)"
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
     tags:
       - "**"
   pull_request:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   workflow_dispatch:
     inputs:
       ref:
@@ -51,18 +51,20 @@ jobs:
           else
             echo "build=none" >> "$GITHUB_OUTPUT"
           fi
+
           if [ -f "./gradlew" ]; then
             echo "has_gradlew=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_gradlew=false" >> "$GITHUB_OUTPUT"
           fi
+
           if [ -f "./mvnw" ]; then
             echo "has_mvnw=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_mvnw=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 没 wrapper 时装一个可控 Gradle
+      # 没 wrapper 时装一个可控 Gradle（避免系统 Gradle 9.x 造成 JDK/插件兼容问题）
       - name: Setup Gradle (only when no wrapper)
         if: ${{ steps.detect.outputs.build == 'gradle' && steps.detect.outputs.has_gradlew == 'false' }}
         uses: gradle/actions/setup-gradle@v4
@@ -123,7 +125,58 @@ jobs:
         with:
           category: "/language:java-kotlin"
 
+      # ✅ 从 SARIF 里打印“本次 suite 包含哪些规则 / 本次触发哪些规则”
+      - name: Print CodeQL rules used (from SARIF)
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🧾 CodeQL rules used (from SARIF)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ ! -d "results" ]; then
+            echo "- SARIF folder not found: \`results/\`（可能 build 没成功或 analyze 没执行）" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          shopt -s nullglob
+          FILES=(results/*.sarif)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "- No SARIF files found in \`results/*.sarif\`（可能 analyze 没执行）" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          for SARIF in "${FILES[@]}"; do
+            echo "### 📄 ${SARIF}" >> $GITHUB_STEP_SUMMARY
+
+            TOTAL_RULES=$(jq '[.runs[].tool.driver.rules[]?] | length' "$SARIF" 2>/dev/null || echo "0")
+            TRIGGERED_RULES=$(jq '[.runs[].results[]? | .ruleId] | unique | length' "$SARIF" 2>/dev/null || echo "0")
+
+            echo "- Rules in SARIF: **$TOTAL_RULES**" >> $GITHUB_STEP_SUMMARY
+            echo "- Rules triggered (alerts exist): **$TRIGGERED_RULES**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            echo "<details><summary>✅ 展开：本次 suite 的全部规则 ruleId</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            jq -r '.runs[].tool.driver.rules[]?.id' "$SARIF" | sort -u >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>🔥 展开：本次实际触发告警的 ruleId（有 results）</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            jq -r '.runs[].results[]?.ruleId' "$SARIF" | sort -u >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+          done
+
       - name: Summary (build mode)
+        if: always()
         shell: bash
         run: |
           echo "## 🛡️ CodeQL Scan Summary" >> $GITHUB_STEP_SUMMARY
@@ -131,20 +184,23 @@ jobs:
           echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Build tool:** \`${{ steps.detect.outputs.build }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Build wrapper:** gradlew=${{ steps.detect.outputs.has_gradlew }}, mvnw=${{ steps.detect.outputs.has_mvnw }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Query suite:** ✅ \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
           if [ "${{ steps.build_out.outputs.build_ok }}" = "true" ]; then
-            echo "**Scan mode:** ✅ Build (manual) + Security Extended rules" >> $GITHUB_STEP_SUMMARY
+            echo "**Scan mode:** ✅ Build (manual) + security-extended" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
             echo "- **Security → Code scanning**（默认更偏向展示默认分支告警）" >> $GITHUB_STEP_SUMMARY
             echo "- 本次运行日志：*Perform CodeQL Analysis (build)*" >> $GITHUB_STEP_SUMMARY
           else
             echo "**Scan mode:** ⚠️ Build failed → will run **no-build fallback** in next job" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> ℹ️ Build failed. Some historical tags use very old Gradle/Maven settings; fallback will still produce results." >> $GITHUB_STEP_SUMMARY
           fi
 
   # =========================
-  # 2) 构建失败就“无构建模式”扫描
+  # 2) 构建失败就“无构建模式”扫描（保证能出结果）
   # =========================
   analyze-nobuild:
     name: Analyze (Java - no-build fallback)
@@ -175,14 +231,66 @@ jobs:
         with:
           category: "/language:java-kotlin"
 
+      - name: Print CodeQL rules used (from SARIF)
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🧾 CodeQL rules used (from SARIF)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ ! -d "results" ]; then
+            echo "- SARIF folder not found: \`results/\`" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          shopt -s nullglob
+          FILES=(results/*.sarif)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "- No SARIF files found in \`results/*.sarif\`" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          for SARIF in "${FILES[@]}"; do
+            echo "### 📄 ${SARIF}" >> $GITHUB_STEP_SUMMARY
+
+            TOTAL_RULES=$(jq '[.runs[].tool.driver.rules[]?] | length' "$SARIF" 2>/dev/null || echo "0")
+            TRIGGERED_RULES=$(jq '[.runs[].results[]? | .ruleId] | unique | length' "$SARIF" 2>/dev/null || echo "0")
+
+            echo "- Rules in SARIF: **$TOTAL_RULES**" >> $GITHUB_STEP_SUMMARY
+            echo "- Rules triggered (alerts exist): **$TRIGGERED_RULES**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            echo "<details><summary>✅ 展开：本次 suite 的全部规则 ruleId</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            jq -r '.runs[].tool.driver.rules[]?.id' "$SARIF" | sort -u >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>🔥 展开：本次实际触发告警的 ruleId（有 results）</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            jq -r '.runs[].results[]?.ruleId' "$SARIF" | sort -u >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+          done
+
       - name: Summary (no-build fallback)
+        if: always()
         shell: bash
         run: |
           echo "## 🛡️ CodeQL Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Query suite:** ✅ \`security-extended\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Scan mode:** ✅ No-build fallback + Security Extended rules" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan mode:** ✅ No-build fallback + security-extended" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> ℹ️ Build failed, but CodeQL still scanned the code in **no-build** mode to ensure results are produced." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
           echo "- **Security → Code scanning**（tag 扫描结果可能不会在默认视图立刻显示，需要调整过滤条件）" >> $GITHUB_STEP_SUMMARY
