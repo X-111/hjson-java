@@ -1,0 +1,140 @@
+name: "CodeQL (Java - Security Extended + Build Fallback + Scan Summary)"
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags:
+      - "**"
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要扫描的分支或 Tag（例如：master / v1.2.3）"
+        required: true
+        default: "master"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze-build:
+    name: Analyze (Build if possible)
+    runs-on: ubuntu-latest
+    outputs:
+      build_ok: ${{ steps.build_out.outputs.build_ok }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+
+      - name: Detect build system
+        id: detect
+        run: |
+          set -e
+          if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            echo "build=gradle" >> $GITHUB_OUTPUT
+          elif [ -f "pom.xml" ]; then
+            echo "build=maven" >> $GITHUB_OUTPUT
+          else
+            echo "build=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Initialize CodeQL (security-extended)
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build (try)
+        id: build_try
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          if [ "${{ steps.detect.outputs.build }}" = "gradle" ]; then
+            chmod +x ./gradlew || true
+            ./gradlew --no-daemon clean assemble -x test --warning-mode all
+          elif [ "${{ steps.detect.outputs.build }}" = "maven" ]; then
+            chmod +x ./mvnw || true
+            mvn -B -DskipTests package
+          fi
+
+      - name: Mark build result
+        id: build_out
+        run: |
+          if [ "${{ steps.build_try.outcome }}" = "success" ]; then
+            echo "build_ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "build_ok=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Perform CodeQL Analysis (build)
+        if: ${{ steps.build_out.outputs.build_ok == 'true' }}
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:java-kotlin"
+
+      - name: Summary (build mode)
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🛡️ CodeQL Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Build system:** \`${{ steps.detect.outputs.build }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.build_out.outputs.build_ok }}" = "true" ]; then
+            echo "**Scan mode:** ✅ Build (manual) + security-extended" >> $GITHUB_STEP_SUMMARY
+            echo "- Results are uploaded automatically by CodeQL action." >> $GITHUB_STEP_SUMMARY
+            echo "- See **Security → Code scanning** for alerts." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Scan mode:** ⚠️ Build failed — Falling back to no‑build scan." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  analyze-nobuild:
+    name: Analyze (No‑Build Fallback)
+    needs: analyze-build
+    if: ${{ needs.analyze-build.outputs.build_ok != 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+
+      - name: Initialize CodeQL (no‑build)
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: none
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis (no‑build)
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:java-kotlin"
+
+      - name: Summary (no‑build)
+        shell: bash
+        run: |
+          echo "## 🛡️ CodeQL Scan Summary (No‑Build)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan mode:** ⚠️ No‑build fallback + security‑extended" >> $GITHUB_STEP_SUMMARY
+          echo "- Results are uploaded automatically." >> $GITHUB_STEP_SUMMARY
+          echo "- See **Security → Code scanning** for alerts." >> $GITHUB_STEP_SUMMARY
