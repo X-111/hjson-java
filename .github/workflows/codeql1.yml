@@ -18,9 +18,6 @@ permissions:
   contents: read
 
 jobs:
-  # =========================
-  # 1) 尝试“构建模式”扫描（更准确）
-  # =========================
   analyze-build:
     name: Analyze (Java - build if possible)
     runs-on: ubuntu-latest
@@ -116,35 +113,21 @@ jobs:
         with:
           category: "/language:java-kotlin"
 
-      # =========================
-      # 增加上传结果调试输出
-      # =========================
       - name: Upload SARIF results
         if: always()
         run: |
           echo "Uploading SARIF results..." >> $GITHUB_STEP_SUMMARY
           echo "Results will be uploaded to Code scanning tab" >> $GITHUB_STEP_SUMMARY
           
-          # 在上传结果后，确保 GitHub 上传的结果
-          echo "Checking if SARIF files are uploaded..." >> $GITHUB_STEP_SUMMARY
+          # 检查是否存在 SARIF 文件
+          if [ ! -f "${{ github.workspace }}/results/java.sarif" ]; then
+            echo "- SARIF file not found: \`${{ github.workspace }}/results/java.sarif\`" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "SARIF file found at ${{ github.workspace }}/results/java.sarif" >> $GITHUB_STEP_SUMMARY
+          ls -l ${{ github.workspace }}/results/ >> $GITHUB_STEP_SUMMARY
           
-          # 这里使用 GITHUB_WORKSPACE 作为路径
-          if [ ! -d "$GITHUB_WORKSPACE/results" ]; then
-            echo "- SARIF folder not found: \`$GITHUB_WORKSPACE/results/\`" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-          shopt -s nullglob
-          FILES=($GITHUB_WORKSPACE/results/*.sarif)
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "- No SARIF files found in \`$GITHUB_WORKSPACE/results/*.sarif\`" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-          # 打印文件内容
-          echo "SARIF files found in results/:" >> $GITHUB_STEP_SUMMARY
-          ls -l $GITHUB_WORKSPACE/results/ >> $GITHUB_STEP_SUMMARY
-
       - name: Summary (build mode)
         if: always()
         shell: bash
