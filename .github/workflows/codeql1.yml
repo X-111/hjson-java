@@ -51,13 +51,11 @@ jobs:
           else
             echo "build=none" >> "$GITHUB_OUTPUT"
           fi
-
           if [ -f "./gradlew" ]; then
             echo "has_gradlew=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_gradlew=false" >> "$GITHUB_OUTPUT"
           fi
-
           if [ -f "./mvnw" ]; then
             echo "has_mvnw=true" >> "$GITHUB_OUTPUT"
           else
@@ -213,8 +211,7 @@ jobs:
       security-events: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
           fetch-depth: 0
