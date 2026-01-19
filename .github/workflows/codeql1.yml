@@ -43,6 +43,7 @@ jobs:
           else
             echo "build=none" >> $GITHUB_OUTPUT
           fi
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -68,6 +69,7 @@ jobs:
             chmod +x ./mvnw || true
             mvn -B -DskipTests package
           fi
+
       - name: Mark build result
         id: build_out
         run: |
@@ -76,6 +78,7 @@ jobs:
           else
             echo "build_ok=false" >> $GITHUB_OUTPUT
           fi
+
       - name: Perform CodeQL Analysis (build)
         if: ${{ steps.build_out.outputs.build_ok == 'true' }}
         uses: github/codeql-action/analyze@v4
@@ -92,6 +95,7 @@ jobs:
           echo "**Build system:** \`${{ steps.detect.outputs.build }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
           if [ "${{ steps.build_out.outputs.build_ok }}" = "true" ]; then
             echo "**Scan mode:** ✅ Build (manual) + security-extended" >> $GITHUB_STEP_SUMMARY
             echo "- Results are uploaded automatically by CodeQL action." >> $GITHUB_STEP_SUMMARY
@@ -99,6 +103,7 @@ jobs:
           else
             echo "**Scan mode:** ⚠️ Build failed — Falling back to no‑build scan." >> $GITHUB_STEP_SUMMARY
           fi
+
   analyze-nobuild:
     name: Analyze (No‑Build Fallback)
     needs: analyze-build
