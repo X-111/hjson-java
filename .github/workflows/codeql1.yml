@@ -123,112 +123,38 @@ jobs:
         with:
           category: "/language:java-kotlin"
 
-      # ✅ 打印查询规则的详细信息（包括触发的规则）
-      - name: Print CodeQL rules used (from SARIF)
-        if: always()
-        shell: bash
+      # =========================
+      # 新增检查 SARIF 文件是否生成的步骤
+      # =========================
+      - name: Verify SARIF output folder
         run: |
-          echo "## 🧾 CodeQL rules used (from SARIF)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # GitHub 自动上传的 SARIF 文件不会保存到 `results/`，它们会直接通过 GitHub 的 API 上传
-          echo "Checking if SARIF files are uploaded..." >> $GITHUB_STEP_SUMMARY
-          
-          if [ ! -d "results" ]; then
-            echo "- SARIF folder not found: \`results/\`（可能 build 没成功或 analyze 没执行）" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-          shopt -s nullglob
-          FILES=(results/*.sarif)
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "- No SARIF files found in \`results/*.sarif\`（可能 analyze 没执行）" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-          echo "SARIF files found in results/:" >> $GITHUB_STEP_SUMMARY
-          ls -l results/ >> $GITHUB_STEP_SUMMARY  # List the contents of the results folder
-
-      - name: Summary (build mode)
-        if: always()
-        shell: bash
-        run: |
-          echo "## 🛡️ CodeQL Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Build tool:** \`${{ steps.detect.outputs.build }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Build wrapper:** gradlew=${{ steps.detect.outputs.has_gradlew }}, mvnw=${{ steps.detect.outputs.has_mvnw }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.build_out.outputs.build_ok }}" = "true" ]; then
-            echo "**Scan mode:** ✅ Build (manual) + security-extended" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
-            echo "- **Security → Code scanning**（默认更偏向展示默认分支告警）" >> $GITHUB_STEP_SUMMARY
-            echo "- 本次运行日志：*Perform CodeQL Analysis (build)*" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Scan mode:** ⚠️ Build failed → will run **no-build fallback** in next job" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "> ℹ️ Build failed. Some historical tags use very old Gradle/Maven settings; fallback will still produce results." >> $GITHUB_STEP_SUMMARY
-          fi
-
-  # =========================
-  # 2) 构建失败就“无构建模式”扫描（保证能出结果）
-  # =========================
-  analyze-nobuild:
-    name: Analyze (Java - no-build fallback)
-    needs: analyze-build
-    if: ${{ needs.analyze-build.outputs.build_ok != 'true' }}
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
-          fetch-depth: 0
-
-      - name: Initialize CodeQL (no-build, security-extended)
-        uses: github/codeql-action/init@v4
-        with:
-          languages: java-kotlin
-          build-mode: none
-          queries: security-extended
-
-      - name: Perform CodeQL Analysis (no-build)
-        uses: github/codeql-action/analyze@v4
-        with:
-          category: "/language:java-kotlin"
-
-      # Print SARIF output content
-      - name: Print CodeQL rules used (from SARIF)
-        if: always()
-        shell: bash
-        run: |
-          echo "## 🧾 CodeQL rules used (from SARIF)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
+          echo "Checking if SARIF files are generated..."
           if [ ! -d "results" ]; then
             echo "- SARIF folder not found: \`results/\`" >> $GITHUB_STEP_SUMMARY
-            exit 0
+            exit 1
           fi
 
           shopt -s nullglob
           FILES=(results/*.sarif)
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "- No SARIF files found in \`results/*.sarif\`" >> $GITHUB_STEP_SUMMARY
-            exit 0
+            exit 1
           fi
 
-          for SARIF in "${FILES[@]}"; do
+          echo "SARIF files found in results/:" >> $GITHUB_STEP_SUMMARY
+          ls -l results/ >> $GITHUB_STEP_SUMMARY  # List the contents of the results folder
+
+      # 继续分析并输出 SARIF 文件内容
+      - name: Print CodeQL rules used (from SARIF)
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🧾 CodeQL rules used (from SARIF)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          for SARIF in results/*.sarif; do
             echo "### 📄 ${SARIF}" >> $GITHUB_STEP_SUMMARY
 
             TOTAL_RULES=$(jq '[.runs[].tool.driver.rules[]?] | length' "$SARIF" 2>/dev/null || echo "0")
@@ -256,18 +182,26 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           done
 
-      - name: Summary (no-build fallback)
+      - name: Summary (build mode)
         if: always()
         shell: bash
         run: |
           echo "## 🛡️ CodeQL Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Scan mode:** ✅ No-build fallback + security-extended" >> $GITHUB_STEP_SUMMARY
+          echo "**Build tool:** \`${{ steps.detect.outputs.build }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Build wrapper:** gradlew=${{ steps.detect.outputs.has_gradlew }}, mvnw=${{ steps.detect.outputs.has_mvnw }}" >> $GITHUB_STEP_SUMMARY
           echo "**Query suite:** \`security-extended\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> ℹ️ Build failed, but CodeQL still scanned the code in **no-build** mode to ensure results are produced." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Security → Code scanning**（tag 扫描结果可能不会在默认视图立刻显示，需要调整过滤条件）" >> $GITHUB_STEP_SUMMARY
-          echo "- 本次运行日志：*Perform CodeQL Analysis (no-build)*" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.build_out.outputs.build_ok }}" = "true" ]; then
+            echo "**Scan mode:** ✅ Build (manual) + security-extended" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
+            echo "- **Security → Code scanning**（默认更偏向展示默认分支告警）" >> $GITHUB_STEP_SUMMARY
+            echo "- 本次运行日志：*Perform CodeQL Analysis (build)*" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Scan mode:** ⚠️ Build failed → will run **no-build fallback** in next job" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> ℹ️ Build failed. Some historical tags use very old Gradle/Maven settings; fallback will still produce results." >> $GITHUB_STEP_SUMMARY
+          fi
