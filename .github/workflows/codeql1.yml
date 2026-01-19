@@ -1,4 +1,4 @@
-name: "CodeQL (Java - Default Rules, build auto-fallback)"
+name: "CodeQL (Java - Default Rules, build fallback to no-build)"
 
 on:
   push:
@@ -18,13 +18,19 @@ permissions:
   contents: read
 
 jobs:
-  analyze-java:
-    name: Analyze (Java)
+  # =========================
+  # 1) 尝试“构建模式”扫描（更准确）
+  # =========================
+  analyze-build:
+    name: Analyze (Java - build if possible)
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       security-events: write
+
+    outputs:
+      build_ok: ${{ steps.build_out.outputs.build_ok }}
 
     steps:
       - name: Checkout repository
@@ -58,34 +64,33 @@ jobs:
             echo "has_mvnw=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 如果是 Gradle 项目但没有 wrapper，就装一个可控的 Gradle（避免系统 Gradle 9.x）
+      # 没 wrapper 时装一个可控 Gradle（避免系统 Gradle 9.x 带来的 JDK 要求问题）
       - name: Setup Gradle (only when no wrapper)
         if: ${{ steps.detect.outputs.build == 'gradle' && steps.detect.outputs.has_gradlew == 'false' }}
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "7.6.4"
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: java-kotlin
-          build-mode: manual
-          # 不写 queries: => 使用 CodeQL 默认规则库（default query suite）
-
-      # --------- Build Try 1: Java 17 ----------
       - name: Set up Java 17
-        id: j17
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Build with Java 17
-        id: build17
+      - name: Initialize CodeQL (build mode)
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          # 不写 queries: => 默认规则库（default query suite）
+
+      - name: Build (try)
+        id: build_try
         continue-on-error: true
         shell: bash
         run: |
           set -euxo pipefail
+
           if [ "${{ steps.detect.outputs.build }}" = "gradle" ]; then
             if [ -f "./gradlew" ]; then
               chmod +x ./gradlew
@@ -93,6 +98,7 @@ jobs:
             else
               gradle --no-daemon clean assemble -x test
             fi
+
           elif [ "${{ steps.detect.outputs.build }}" = "maven" ]; then
             if [ -f "./mvnw" ]; then
               chmod +x ./mvnw
@@ -100,46 +106,55 @@ jobs:
             else
               mvn -B -DskipTests package
             fi
+
           else
-            echo "ERROR: No build files (Gradle/Maven) found."
+            echo "No build files found (Gradle/Maven)."
             exit 1
           fi
 
-      # --------- Build Try 2: Java 11 ----------
-      - name: Set up Java 11
-        if: ${{ steps.build17.outcome != 'success' }}
-        id: j11
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "11"
-
-      - name: Build with Java 11
-        if: ${{ steps.build17.outcome != 'success' }}
-        id: build11
+      - name: Mark build result
+        id: build_out
         shell: bash
         run: |
-          set -euxo pipefail
-          if [ "${{ steps.detect.outputs.build }}" = "gradle" ]; then
-            if [ -f "./gradlew" ]; then
-              chmod +x ./gradlew
-              ./gradlew --no-daemon clean assemble -x test
-            else
-              gradle --no-daemon clean assemble -x test
-            fi
-          elif [ "${{ steps.detect.outputs.build }}" = "maven" ]; then
-            if [ -f "./mvnw" ]; then
-              chmod +x ./mvnw
-              ./mvnw -B -DskipTests package
-            else
-              mvn -B -DskipTests package
-            fi
+          if [ "${{ steps.build_try.outcome }}" = "success" ]; then
+            echo "build_ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "ERROR: No build files (Gradle/Maven) found."
-            exit 1
+            echo "build_ok=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Perform CodeQL Analysis
+      - name: Perform CodeQL Analysis (build)
+        if: ${{ steps.build_out.outputs.build_ok == 'true' }}
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:java-kotlin"
+
+  # =========================
+  # 2) 构建失败就“无构建模式”扫描（保证能出结果）
+  # =========================
+  analyze-nobuild:
+    name: Analyze (Java - no-build fallback)
+    needs: analyze-build
+    if: ${{ needs.analyze-build.outputs.build_ok != 'true' }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Initialize CodeQL (no-build)
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: none
+
+      - name: Perform CodeQL Analysis (no-build)
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:java-kotlin"
