@@ -1,4 +1,4 @@
-name: "CodeQL (Java - Default Rules, build fallback + Summary)"
+name: "CodeQL (Java - Security Extended, build fallback + Summary)"
 
 on:
   push:
@@ -44,7 +44,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
             echo "build=gradle" >> "$GITHUB_OUTPUT"
           elif [ -f "pom.xml" ]; then
@@ -52,20 +51,18 @@ jobs:
           else
             echo "build=none" >> "$GITHUB_OUTPUT"
           fi
-
           if [ -f "./gradlew" ]; then
             echo "has_gradlew=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_gradlew=false" >> "$GITHUB_OUTPUT"
           fi
-
           if [ -f "./mvnw" ]; then
             echo "has_mvnw=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_mvnw=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 没 wrapper 时装一个可控 Gradle（避免系统 Gradle 9.x 造成 JDK/插件兼容问题）
+      # 没 wrapper 时装一个可控 Gradle
       - name: Setup Gradle (only when no wrapper)
         if: ${{ steps.detect.outputs.build == 'gradle' && steps.detect.outputs.has_gradlew == 'false' }}
         uses: gradle/actions/setup-gradle@v4
@@ -78,12 +75,12 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Initialize CodeQL (build mode)
+      - name: Initialize CodeQL (build mode, security-extended)
         uses: github/codeql-action/init@v4
         with:
           languages: java-kotlin
           build-mode: manual
-          # 不写 queries: => 默认规则库（default query suite）
+          queries: security-extended
 
       - name: Build (try)
         id: build_try
@@ -91,7 +88,6 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-
           if [ "${{ steps.detect.outputs.build }}" = "gradle" ]; then
             if [ -f "./gradlew" ]; then
               chmod +x ./gradlew
@@ -99,7 +95,6 @@ jobs:
             else
               gradle --no-daemon clean assemble -x test --warning-mode all
             fi
-
           elif [ "${{ steps.detect.outputs.build }}" = "maven" ]; then
             if [ -f "./mvnw" ]; then
               chmod +x ./mvnw
@@ -107,7 +102,6 @@ jobs:
             else
               mvn -B -DskipTests package
             fi
-
           else
             echo "No build files found (Gradle/Maven)."
             exit 1
@@ -137,22 +131,20 @@ jobs:
           echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Build tool:** \`${{ steps.detect.outputs.build }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Build wrapper:** gradlew=${{ steps.detect.outputs.has_gradlew }}, mvnw=${{ steps.detect.outputs.has_mvnw }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** ✅ \`security-extended\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-
           if [ "${{ steps.build_out.outputs.build_ok }}" = "true" ]; then
-            echo "**Scan mode:** ✅ Build (manual) + Default rules" >> $GITHUB_STEP_SUMMARY
+            echo "**Scan mode:** ✅ Build (manual) + Security Extended rules" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
             echo "- **Security → Code scanning**（默认更偏向展示默认分支告警）" >> $GITHUB_STEP_SUMMARY
             echo "- 本次运行日志：*Perform CodeQL Analysis (build)*" >> $GITHUB_STEP_SUMMARY
           else
             echo "**Scan mode:** ⚠️ Build failed → will run **no-build fallback** in next job" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "> ℹ️ Build failed. This is expected for some historical tags (old Gradle scripts/plugins)." >> $GITHUB_STEP_SUMMARY
           fi
 
   # =========================
-  # 2) 构建失败就“无构建模式”扫描（保证能出结果）
+  # 2) 构建失败就“无构建模式”扫描
   # =========================
   analyze-nobuild:
     name: Analyze (Java - no-build fallback)
@@ -171,11 +163,12 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Initialize CodeQL (no-build)
+      - name: Initialize CodeQL (no-build, security-extended)
         uses: github/codeql-action/init@v4
         with:
           languages: java-kotlin
           build-mode: none
+          queries: security-extended
 
       - name: Perform CodeQL Analysis (no-build)
         uses: github/codeql-action/analyze@v4
@@ -188,9 +181,8 @@ jobs:
           echo "## 🛡️ CodeQL Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Ref:** \`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Scan mode:** ✅ No-build fallback + Default rules" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> ℹ️ Build failed, but CodeQL still scanned the code in **no-build** mode to ensure results are produced." >> $GITHUB_STEP_SUMMARY
+          echo "**Query suite:** ✅ \`security-extended\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan mode:** ✅ No-build fallback + Security Extended rules" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔍 Where to view results" >> $GITHUB_STEP_SUMMARY
           echo "- **Security → Code scanning**（tag 扫描结果可能不会在默认视图立刻显示，需要调整过滤条件）" >> $GITHUB_STEP_SUMMARY
