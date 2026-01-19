@@ -1,4 +1,4 @@
-ame: "CodeQL (Java - Security Extended + Build Fallback + Scan Summary)"
+name: "CodeQL (Java - Security Extended + Build Fallback + Scan Summary)"
 
 on:
   push:
